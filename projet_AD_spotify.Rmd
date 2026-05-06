@@ -1,0 +1,10 @@
+---
+title: "Projet_AD_Spotify"
+author: "Aurore, Yann, Ayman, Nhan"
+date: "2026-05-06"
+output: html_document
+---
+
+```{r}
+
+```
