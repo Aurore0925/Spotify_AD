@@ -1,9 +1,681 @@
 ---
-title: "Projet_AD_Spotify"
+title: "Analyse du jeu de données '30000 Spotify Songs'"
 author: "Aurore, Yann, Ayman, Nhan"
 date: "2026-05-06"
-output: html_document
+output:
+  pdf_document: default
+    latex_engine: xelatex
+  html_document: default
 ---
+
+Jeu de données "30000 Spotify Songs" disponible sur KAGGLE : <https://www.kaggle.com/datasets/joebeachcapital/30000-spotify-songs>.
+
+
+```{r}
+# Liste des packages à installer
+packages <- c("tidyverse", "GGally", "plotly", "glmnet", 
+              "ggfortify", "pROC", "ROCR")
+
+# Installer les packages manquants
+install.packages(packages)
+```
+
+```{r}
+library(ggplot2)
+#library(tidyverse)
+library(gridExtra)
+#library(GGally)
+#library(plotly)
+library(corrplot)
+library(reshape2)
+library(FactoMineR) 
+library(factoextra)
+#library(glmnet) 
+#library(ggfortify)
+#library(pROC)
+#library(ROCR)
+library(dplyr)
+library(MASS)
+```
+
+# Import des données et pré-traitement
+
+## Import du jeu de données complet initial
+```{r, include=FALSE}
+# import
+data_init <- read.csv("Data.csv")
+data <- data_init #copie
+```
+
+```{r, echo=FALSE}
+# Exploration rapide
+str(data)        # structure et types
+head(data)       # 6 premières lignes
+```
+
+```{r}
+cat("dimensions : ")
+dim(data)        # nb lignes × colonnes
+cat("---\n")
+cat("variables : ")
+colnames(data)   # noms des colonnes
+```
+Individus : chansons. 
+Nombre d'individus : 32 833. 
+Variables enregistrées : 23.
+
+```{r}
+# Résumé de toutes les variables
+summary(data)
+```
+
+```{r, echo=FALSE}
+# Valeurs manquantes
+
+cat('Données manquantes (total) : \n')
+sum(is.na(data))
+cat("---\n")
+
+cat('Données manquantes dans chaque colonne (variable) : \n')
+colSums(is.na(data))
+cat("---\n")
+
+cat("Données manquantes dans chaque ligne (chanson) où c'est > 0 : \n")
+row_missing_value = rowSums(is.na(data)) #nb de missing values dans chaque ligne
+cat(row_missing_value[row_missing_value != 0])
+cat('\nNuméro de ligne associé : \n')
+row_idx_na <- which(row_missing_value > 0) # indices des lignes avec des NA
+row_idx_na
+```
+On observe 15 valeurs manquantes : 5 pour la variable track_name, 5 pour track_artist et 5 pour track_album_name. De plus elles sont concentrées sur 5 individus seulement qui possèdent à chaque fois 3 valeurs manquantes. Les voici :
+
+```{r, echo=FALSE}
+data[c(8152, 9283, 9284, 19569, 19812), ]
+```
+Variable instrumentalness :
+
+" Instrumentalness : Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0." (sur KAGGLE)
+
+```{r}
+# Transformation de la variable instrumentalness
+data$instrumentalness_quali <- ifelse(data$instrumentalness <= 0.5, 0, 1)
+data$instrumentalness_quali <- factor(data$instrumentalness_quali,
+                                      levels = c(0, 1),
+                                      labels = c("faible", "élevée"))
+```
+
+```{r, echo=FALSE}
+n_avant <- nrow(data)
+data <- na.omit(data)
+n_apres <- nrow(data)
+n_supprimes <- n_avant - n_apres
+
+cat("Lignes supprimées (NA) :", n_supprimes, "\n")
+cat("Lignes restantes :", n_apres, "\n")
+```
+Variables qu'on décide de retirer et pourquoi : 
+-> on supprime les 5 lignes qui contiennent des valeurs manquantes
+
+Doublons sur les track_id et track_name : cela est dû au fait que les morceaux sont présents dans plusieurs playlists par exemple.
+
+On ne va donc pas supprimer ces doublons pour toutes les analyses. Par contre pour des analyses portant sur les morceaux directement on supprimera les doublons pour que chaque morceau ait le même poids.
+
+# Analyse unidimentionnelle
+
+## Variables quantitatives
+```{r}
+quantit <- c('track_popularity','danceability','energy','loudness', 'speechiness','acousticness', 'liveness','valence','tempo','duration_ms')
+data_quanti <- data[,quantit]
+cat("dimensions de data_quanti : ")
+dim(data_quanti)
+head(data_quanti)
+```
+
+```{r, echo=FALSE}
+for (var in quantit) {
+  
+  x <- data[[var]]
+  
+  # Diviser la fenêtre graphique en 1 ligne, 2 colonnes
+  par(mfrow = c(1, 2), oma = c(0, 0, 3, 0))  # oma = marge pour titre global
+  
+  # Histogramme + densité
+  hist(x,
+       main = "Distribution",
+       xlab = var,
+       col  = "steelblue",
+       freq = FALSE)
+  
+  lines(density(x), col = "red")
+  
+  # Boxplot
+  boxplot(x,
+          main = "Boxplot",
+          ylab = var)
+  
+  # Titre global pour les deux graphes
+  mtext(paste("Variable :", var), outer = TRUE, cex = 1.5)
+  
+}
+```
+
+## Variables qualitatives
+```{r, echo=FALSE}
+qualit <- c("playlist_genre", "playlist_subgenre", "mode", "key","instrumentalness_quali")
+data_quali <- data[,qualit]
+cat("dimensions de data_quali : ")
+dim(data_quali)
+head(data_quali)
+```
+
+```{r, echo=FALSE}
+for (var in qualit) {
+  
+  x <- as.factor(data[[var]])
+  
+  effectifs <- sort(table(x), decreasing = TRUE)
+  freq <- round(prop.table(effectifs), 3)
+  
+  par(mfrow = c(1,2), mar = c(8,4,4,2))
+  
+  barplot(effectifs,
+          main = paste("Effectifs -", var),
+          col = "steelblue",
+          las = 2,
+          cex.names = 0.8)
+  
+  pie(effectifs,
+      main = paste("Répartition -", var),
+      col = rainbow(length(effectifs)))
+  
+}
+```
+
+```{r, echo=FALSE}
+for (var in qualit) {
+    
+  x <- as.factor(data[[var]])
+  
+  effectifs <- sort(table(x), decreasing = TRUE)
+  freq <- round(prop.table(effectifs), 3)
+  cat("\n========================================\n")
+  cat("Variable :", var, "\n")
+  cat("========================================\n\n")
+  resultat <- data.frame(
+    Modalite = names(effectifs),
+    Effectif = as.vector(effectifs),
+    Frequence = as.vector(freq)
+  )
+  
+  # TEXTE (tableau lisible)
+  print(resultat)
+}
+```
+```{r, echo=FALSE}
+#qualit2 <- c("track_name", "track_artist", "track_album_name", "track_album_release_date", "playlist_name", "playlist_subgenre")
+qualit2 <- c("track_name", "track_artist", "track_album_name", "track_album_release_date", "playlist_name", "playlist_genre", "playlist_subgenre")
+data_quali2 <- data[,qualit2]
+cat("dimensions de data_quali2 : ")
+dim(data_quali2)
+head(data_quali2)
+```
+
+```{r, echo=FALSE}
+for (var in qualit2) {
+  x <- as.factor(data[[var]])
+  effectifs <- table(x)
+  freq <- prop.table(effectifs)
+  
+  # Prendre le min entre 10 et le nb de modalités disponibles
+  n_top <- min(10, length(effectifs))
+  
+  top_eff  <- sort(effectifs, decreasing = TRUE)[1:n_top]
+  top_freq <- freq[names(top_eff)]
+  top_freq <- top_freq[top_freq > 0]
+  top_eff  <- top_eff[names(top_eff) %in% names(top_freq)]
+  
+  par(mfrow = c(1, 2), oma = c(0, 0, 3, 0))
+  
+  barplot(top_eff,
+          main = paste("Top", n_top, "modalités"),
+          col  = "steelblue",
+          las  = 2,
+          ylab = "Effectifs")
+  
+  pie(top_freq,
+      main = paste("Top", n_top, "(", round(sum(top_freq)*100, 1), "% du total)"),
+      col  = rainbow(length(top_freq)))
+  
+  mtext(paste("Variable :", var, "—", nlevels(x), "modalités uniques"),
+        outer = TRUE, cex = 1.2)
+}
+```
+
+```{r,echo=FALSE}
+for (var in qualit2) {
+  
+  x <- as.factor(data[[var]])
+  effectifs <- table(x)
+  freq <- prop.table(effectifs)   # fréquences sur TOUT le dataset
+  
+  cat("\n========================================\n")
+  cat("Variable :", var, "\n")
+  cat("Nb modalités uniques :", nlevels(x), "\n")
+  cat("========================================\n\n")
+  
+  top10_eff  <- sort(effectifs, decreasing = TRUE)[1:10]
+  top10_freq <- freq[names(top10_eff)]   # récupérer les bonnes fréquences
+  
+  print(top10_eff)
+  print(round(top10_freq, 4))
+}
+```
+# Analyse bidimentionnelle
+
+## QxQ
+
+Régressions linéaires :
+
+```{r, echo=FALSE}
+for (i in 1:(length(quantit) - 1)) {
+  for (j in (i + 1):length(quantit)) {
+    
+    var_x <- quantit[i]
+    var_y <- quantit[j]
+    
+    x <- data[[var_x]]
+    y <- data[[var_y]]
+    
+    # Graphique
+    plot(x, y,
+         xlab = var_x,
+         ylab = var_y,
+         main = paste(var_x, "vs", var_y),
+         pch  = 19,
+         col  = adjustcolor("steelblue", alpha.f = 0.3))
+    abline(lm(y ~ x), col = "red", lwd = 2)
+    
+    # Corrélation + régression
+    cat("\n========================================\n")
+    cat(var_x, "vs", var_y, "\n")
+    cat("========================================\n")
+    cat("Corrélation de Pearson :", round(cor(x, y), 4), "\n\n")
+    print(summary(lm(y ~ x)))
+  }
+}
+```
+
+```{r}
+mat_cor <- cor(data[, quantit], use = "complete.obs")
+corrplot(mat_cor, method = "color", type = "upper", tl.cex = 0.8, addCoef.col = "black", number.cex = 0.7)
+```
+Corrélation négative forte entre 'energy' et 'acousticness'.
+Corrélation positive forte entre 'energy' et 'loudness'.
+'acousticness' et 'loudness' sont corrélées négativement.
+
+## QxC
+```{r}
+quantit <- c('track_popularity','danceability','energy','loudness',
+             'speechiness','acousticness',
+             'liveness','valence','tempo','duration_ms')
+for (var_c in qualit) {
+  for (var_q in quantit) {
+    
+    x <- as.factor(data[[var_c]])
+    y <- data[[var_q]]
+    
+    n_mod <- nlevels(x)
+    
+    cat("\n========================================\n")
+    cat(var_q, "selon", var_c, "\n")
+    cat("Nb modalités :", n_mod, "\n")
+    cat("========================================\n")
+    
+    # Stats par groupe (top 10 si trop de modalités)
+    eff <- tapply(y, x, mean, na.rm = TRUE)
+    eff_sorted <- sort(eff, decreasing = TRUE)
+    top_n <- min(10, n_mod)
+    top_groupes <- names(eff_sorted)[1:top_n]
+    
+    # Filtrer les données sur le top N
+    mask <- data[[var_c]] %in% top_groupes
+    x_top <- as.factor(data[[var_c]][mask])
+    y_top <- y[mask]
+    
+    # Graphique
+    par(mfrow = c(1, 2), oma = c(0, 0, 3, 0))
+    
+    # Boxplot
+    boxplot(y_top ~ x_top,
+            main    = paste("Top", top_n, "groupes"),
+            ylab    = var_q,
+            col     = rainbow(top_n),
+            las     = 2,
+            outline = FALSE)   # cacher les outliers pour la lisibilité
+    
+    # Barplot des moyennes
+    moyennes <- tapply(y_top, x_top, mean, na.rm = TRUE)
+    barplot(sort(moyennes, decreasing = TRUE),
+            main = "Moyenne par groupe",
+            col  = "steelblue",
+            las  = 2,
+            ylab = paste("Moyenne", var_q))
+    
+    mtext(paste(var_q, "×", var_c), outer = TRUE, cex = 1.2)
+    
+    # Test statistique
+    if (n_mod <= 2) {
+      # T-test si 2 groupes
+      cat("Test t :\n")
+      print(t.test(y ~ x))
+    } else {
+      # ANOVA sinon
+      cat("ANOVA :\n")
+      print(summary(aov(y_top ~ x_top)))
+    }
+  }
+}
+```
+
+```{r}
+qualit <- c("playlist_genre", "playlist_subgenre", "mode", "key","instrumentalness_quali")
+library(corrplot)
+
+# Matrices résultats
+mat_pval  <- matrix(NA, nrow = length(quantit), ncol = length(qualit),
+                    dimnames = list(quantit, qualit))
+mat_eta2  <- matrix(NA, nrow = length(quantit), ncol = length(qualit),
+                    dimnames = list(quantit, qualit))
+
+for (var_c in qualit) {
+  for (var_q in quantit) {
+    
+    x <- as.factor(data[[var_c]])
+    y <- data[[var_q]]
+    
+    mod       <- aov(y ~ x)
+    s         <- summary(mod)[[1]]
+    
+    p_val     <- s["x", "Pr(>F)"]
+    ss_effect <- s["x",        "Sum Sq"]
+    ss_total  <- sum(s[,       "Sum Sq"])
+    eta2      <- ss_effect / ss_total
+    
+    mat_pval[var_q, var_c] <- p_val
+    mat_eta2[var_q, var_c] <- eta2
+  }
+}
+
+mat_eta2_plot  <- mat_eta2
+mat_pval_plot  <- mat_pval
+
+mat_eta2_plot[is.na(mat_eta2_plot)]   <- 0
+
+mat_pval_plot <- mat_pval
+mat_pval_plot[mat_pval_plot == 0] <- 10**(-321)
+
+
+# Heatmap eta² (force de l'association)
+corrplot(mat_eta2_plot,
+         is.corr  = FALSE,
+         method   = "color",
+         col      = colorRampPalette(c("white", "steelblue", "darkblue"))(100),
+         addCoef.col = "black",
+         number.cex  = 0.7,
+         tl.cex      = 0.8,
+         title       = "Eta² (force d'association Q×C)",
+         mar         = c(0, 0, 2, 0))
+
+# Heatmap p-valeurs (significativité)
+corrplot(-log10(mat_pval_plot),   # -log10 pour mieux voir les petites p-valeurs
+         is.corr  = FALSE,
+         method   = "color",
+         col      = colorRampPalette(c("white", "coral", "darkred"))(100),
+         addCoef.col = "black",
+         number.cex  = 0.7,
+         tl.cex      = 0.8,
+         title       = "−log10(p-valeur) ANOVA Q×C",
+         mar         = c(0, 0, 2, 0))
+```
+
+```{r}
+results <- data.frame()
+
+for (i in 1:(ncol(data_quanti) - 1)) {
+  for (j in (i + 1):ncol(data_quanti)) {
+    test <- chisq.test(table(data_quanti[[i]], data_quanti[[j]]))
+    
+    results <- rbind(results, data.frame(
+      var1    = names(data_quanti)[i],
+      var2    = names(data_quanti)[j],
+      chi_sq  = round(test$statistic, 3),
+      p_value = test$p.value
+    ))
+  }
+}
+print(results)
+```
+
+## ACP
+
+Maintenant on va essayer d'expliquer la variable track_popularity qui ne semble pas directement corrélée à une variable en particulier.
+
+
+
+
+
+#NHAN
+
+```{r}
+num_df <- data %>% dplyr :: select(where(is.numeric)) %>% na.omit() %>% distinct()
+```
+
+```{r}
+summary(num_df)
+```
+
+```{r}
+cat_df <- df %>% dplyr :: select(!where(is.numeric)) %>% na.omit() 
+```
+
+```{r}
+summary(cat_df)
+```
+
+```{r}
+library(moments)
+for (col in names(num_df)) {
+  skewness_value <- skewness(num_df[[col]], na.rm = TRUE)
+  cat("Skewness of", col, ":", skewness_value, "\n")
+}
+```
+
+```{r}
+sum(num_df$instrumentalness == 0)
+```
+
+```{r}
+cat_df$bool_instrumentalness <- ifelse(df$instrumentalness == 0, "Zero", "Non-Zero")
+```
+
+```{r}
+ggplot(cat_df, aes(x = bool_instrumentalness)) +
+    geom_bar(fill = "steelblue") +
+    labs(x = col, y = "Count",
+         title = "Distribution of Instrumentalness" ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+num_df$sqrt_speechiness <- sqrt(num_df$speechiness)
+num_df$sqrt_acousticness <- sqrt(num_df$acousticness)
+num_df$sqrt_duration_ms <- sqrt(num_df$duration_ms)
+num_df$log_liveness <- log(num_df$liveness + 1)
+num_df$cqrt_loudness <- sign(num_df$loudness) * abs(num_df$loudness)^(1/3)
+num_df %>% dplyr :: select(-c(speechiness, acousticness, duration_ms, liveness, instrumentalness,loudness)) -> num_df
+
+```
+
+```{r}
+num_df$log_instrumentalness
+```
+
+```{r}
+for (col in names(num_df)) {
+  p <- ggplot(num_df, aes(x = num_df[[col]])) +
+    geom_histogram(bins = 50,fill = "steelblue",color = "black") +
+    theme_minimal() +
+    labs(title = col, x = col, y = "Frequency")
+    print(p)
+}
+```
+
+```{r}
+results <- data.frame()
+
+for (i in 1:(ncol(cat_df) - 1)) {
+  for (j in (i + 1):ncol(cat_df)) {
+    test <- chisq.test(table(cat_df[[i]], cat_df[[j]]))
+    
+    results <- rbind(results, data.frame(
+      var1    = names(cat_df)[i],
+      var2    = names(cat_df)[j],
+      chi_sq  = round(test$statistic, 3),
+      p_value = test$p.value
+    ))
+  }
+}
+print(results)
+```
+
+```{r}
+df.acp <- PCA(num_df,scale.unit = TRUE)
+```
+
+```{r}
+fviz_pca_var(df.acp, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+```
+
+```{r}
+fviz_pca_var(df.acp, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),axes= c(3,4),repel = TRUE)
+```
+
+```{r}
+fviz_pca_ind(df.acp,col.ind = "cos2",label='none',gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),pointsize = 0.5)
+```
+
+```{r}
+fviz_pca_ind(df.acp,col.ind = "cos2",label='none',gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),pointsize = 0.5,axes = c(3,4))
+```
+
+```{r}
+fviz_eig(df.acp)
+```
+
+```{r}
+genre_num_df <- df %>% dplyr :: select(playlist_genre, where(is.numeric)) %>% na.omit()
+genre_num_df$playlist_genre <- as.factor(genre_num_df$playlist_genre)
+df.lda <- lda(playlist_genre ~ ., data = genre_num_df)
+df.lda.pred <- predict(df.lda)
+```
+
+```{r}
+fviz_pca_ind(df.acp, col.ind = df.lda.pred$class,label='none',pointsize = 0.5)
+```
+
+```{r}
+fviz_pca_ind(df.acp, col.ind = df$playlist_genre,label='none',pointsize = 0.5)
+```
+
+```{r}
+nlevels(df$playlist_subgenre)
+```
+
+```{r}
+table(cat_df)
+```
+
+```{r}
+df.mca <- MCA(cat_df, graph = TRUE)
+print(df.mca)
+```
+
+```{r}
+df.mca$eig
+```
+
+```{r}
+fviz_screeplot(df.mca, addlabels = FALSE,ncp = 36)
+```
+
+```{r}
+fviz_mca_biplot(df.mca, label = "none", ggtheme = theme_minimal())
+```
+
+```{r}
+fviz_mca_var(df.mca, col.var = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), repel = TRUE)
+```
+
+```{r}
+fviz_mca_ind(df.mca, col.ind = "cos2", label = "none", pointsize = 0.5, ggtheme = theme_minimal())
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
 
 ```{r}
 
