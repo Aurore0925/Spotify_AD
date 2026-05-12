@@ -10,30 +10,20 @@ output:
 
 Jeu de données "30000 Spotify Songs" disponible sur KAGGLE : <https://www.kaggle.com/datasets/joebeachcapital/30000-spotify-songs>.
 
-
-```{r}
-# Liste des packages à installer
-packages <- c("tidyverse", "GGally", "plotly", "glmnet", 
-              "ggfortify", "pROC", "ROCR")
-
-# Installer les packages manquants
-install.packages(packages)
-```
-
 ```{r}
 library(ggplot2)
-#library(tidyverse)
+library(tidyverse)
 library(gridExtra)
-#library(GGally)
-#library(plotly)
+library(GGally)
+library(plotly)
 library(corrplot)
 library(reshape2)
 library(FactoMineR) 
 library(factoextra)
-#library(glmnet) 
-#library(ggfortify)
-#library(pROC)
-#library(ROCR)
+library(glmnet) 
+library(ggfortify)
+library(pROC)
+library(ROCR)
 library(dplyr)
 library(MASS)
 ```
@@ -49,25 +39,66 @@ data <- data_init #copie
 
 ```{r, echo=FALSE}
 # Exploration rapide
-str(data)        # structure et types
-head(data)       # 6 premières lignes
+str(data) # structure et types
+head(data) # 6 premières lignes
 ```
 
-```{r}
+```{r, echo=FALSE}
 cat("dimensions : ")
 dim(data)        # nb lignes × colonnes
 cat("---\n")
 cat("variables : ")
 colnames(data)   # noms des colonnes
 ```
-Individus : chansons. 
-Nombre d'individus : 32 833. 
-Variables enregistrées : 23.
 
 ```{r}
 # Résumé de toutes les variables
 summary(data)
 ```
+Individus : morceaux. 
+Nombre d'individus : 32 833.
+
+### Variables et leurs types
+
+Variables enregistrées : 23.
+Type des variables en l'état initial :
+  Variables qualitatives : "track_id", "track_name", "track_artist", "track_album_id", "track_album_name", "track_album_release_date", "playlist_name", "playlist_id", "playlist_genre", "playlist_subgenre".
+  Variables quantitatives : "track_popularity", "danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "duration_ms".
+
+Premières transformations des variables :
+- La variable "mode" doit plutôt être interprétée par le logiciel comme une variable qualitative à deux modalités ;
+- Même chose pour la variable "key", qui aura 13 modalités (12 clés qui vont de 0 à 11 et -1 lorsqu'aucune clé n'est détectée sur le morceau ;
+- La variable "playlist_genre" ne compte que six modalité donc elle peut également être mise en facteur.
+
+```{r, echo=FALSE}
+# Mode
+cat("\nRépartition originale des modes :\n")
+table(data$mode, useNA = "ifany") # on regarde quelle est la répartition des modalités
+data$mode <- factor(data$mode, levels=c("0","1")) # tonalité : 1=majeur, 0=mineur
+cat("\nRépartition des modes après la mise en facteurs :\n")
+table(data$playlist_genre, useNA = "ifany") # on vérifie que la répartition des modalités se soit faite correctement
+
+# Key
+cat("\nRépartition originale des clés :\n")
+table(data$playlist_genre, useNA = "ifany")
+data$key <- factor(data$key, levels=c("-1","0","1","2","3","4","5","6","7","8","9","10","11"))
+cat("\nRépartition des clés après la mise en facteurs :\n")
+table(data$playlist_genre, useNA = "ifany")
+
+# Playlist_genre
+cat("\nRépartition originale des genres :\n")
+table(data$playlist_genre, useNA = "ifany")
+data$playlist_genre <- factor(data$playlist_genre, levels=c("pop","rap","edm","rock","latin","r&b"))
+cat("\nRépartition des genres après la mise en facteurs :\n")
+table(data$playlist_genre, useNA = "ifany")
+
+cat("\n-------------------------------------------------------\n\n")
+str(data)
+cat("\n-------------------------------------------------------\n\n")
+summary(data)
+```
+
+### Valeurs manquantes et doublons
 
 ```{r, echo=FALSE}
 # Valeurs manquantes
