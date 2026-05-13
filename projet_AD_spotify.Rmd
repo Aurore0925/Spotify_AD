@@ -995,6 +995,319 @@ df_W %>%
   theme(legend.position = "none")
 ```
 
+
+# Clustering
+
+on regarde (sur un echantillon reduit, temps de calcul oblige) les graphes silhouete pour k means, wss c'est l'inertie intraclasse,
+
+```{r}
+
+#normalisaion
+quanti_scaled <- scale(data_quanti)
+
+# Sous-échantillon
+set.seed(42)
+sample_idx <- sample(nrow(quanti_scaled), 5000)
+
+quanti_sample <- quanti_scaled[sample_idx, ]  # définition de quanti_sample (scaled)
+spotify_sample <- data[sample_idx, ]           # sous-échantillon du dataset complet (pas scaled)
+
+# Choix du nb de clusters k : elbow + silhouette
+fviz_nbclust(quanti_sample, kmeans, method = "wss", k.max = 10) +
+  labs(title = "Elbow method")
+fviz_nbclust(quanti_sample, kmeans, method = "silhouette", k.max = 10) +
+  labs(title = "Silhouette method")
+
+#aucune stucture de clusters se degage particulierement, scores sihouette très faibles et graphe wss decroissant genre 1/x sans coude particulier
+```
+
+On analyse alors les resultats de l'acp
+
+analyse acp de Nhan :
+
+Variance étalée sur bcp de dims, 4-5 dimensions nécessaires pour capturer ~60% de variance -> pas de structure dominante claire avec ttes les vars
+
+Dim1 : energy + loudness s'opposent à acousticness -> axe électrique vs acoustique ?
+Dim2 : danceability + valence + speechiness s'opposent à duration + tempo 
+
+Dim3 : pas mal de track_popularity entre 3-4 , un peu indé des variables audio ?
+Dim4 : liveness + speechiness
+
+on fait alors k-means sur les coordonnées de la pca, on se dit k = 6 car 6 genre a priori 
+
+```{r}
+
+pca_c <- PCA(quanti_sample, ncp = 5, graph = FALSE)
+coords_pca_c <- pca_c$ind$coord
+
+set.seed(42)
+km <- kmeans(coords_pca_c, centers = 6, nstart = 25)
+spotify_sample$cluster_km <- as.factor(km$cluster)
+
+# Cumulative explained variance
+fviz_eig(pca_c, addlabels = TRUE, cumulative = TRUE) +
+  labs(title = "Variance expliquée cumulée")
+
+# Cercle des corrélations Dim1-Dim2
+fviz_pca_var(pca_c, axes = c(1, 2),
+             col.var = "contrib",
+             gradient.cols = c("turquoise", "orange", "red"),
+             repel = TRUE) +
+  labs(title = "Variables - PCA Dim1 x Dim2")
+
+# Coloré par genre pour voir si les clusters correspondent aux genres
+fviz_pca_ind(pca_c,
+             geom = "point",
+             col.ind = spotify_sample$playlist_genre,
+             alpha.ind = 0.3,
+             palette = "jco",
+             legend.title = "Genre",
+             ggtheme = theme_minimal()) +
+  labs(title = "Individus PCA colorés par genre")
+
+# Coloré par cluster k-means
+fviz_pca_ind(pca_c,
+             geom = "point",
+             col.ind = spotify_sample$cluster_km,
+             alpha.ind = 0.3,
+             ggtheme = theme_minimal()) +
+  labs(title = "Individus PCA colorés par cluster k-means")
+
+prop.table(table(spotify_sample$cluster_km, spotify_sample$playlist_genre), margin = 1)
+
+df_plot <- data.frame(
+  Dim1 = coords_pca_c[, 1],
+  Dim2 = coords_pca_c[, 2],
+  cluster = spotify_sample$cluster_km,
+  genre = spotify_sample$playlist_genre
+)
+
+```
+
+a ce niv on arrive pas encore a bien separer, on va test hac pour avoir une meilleure visu et surtout voir avec le dendogramme si k = 6 est vrmt opti 
+
+
+```{r}
+
+hac <- hclust(dist(coords_pca_c), method = "ward.D2")
+
+# Dendrogramme
+plot(hac, labels = FALSE, main = "Dendrogramme HAC", xlab = "", sub = "")
+rect.hclust(hac, k = 6, border = "red")
+
+# Couper en 6 clusters
+spotify_sample$cluster_hac <- as.factor(cutree(hac, k = 6))
+
+# Visualisation sur PCA
+ggplot(df_plot %>% mutate(cluster_hac = spotify_sample$cluster_hac),
+       aes(x = Dim1, y = Dim2, color = cluster_hac)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  theme_minimal() +
+  labs(title = "HAC (k=6) sur coordonnées PCA")
+
+# Comparaison HAC vs genre
+ari_hac <- adjustedRandIndex(spotify_sample$cluster_hac, spotify_sample$playlist_genre)
+cat("ARI (HAC vs genre) :", round(ari_hac, 3))
+
+# Comparaison HAC vs k-means
+ari_hac_km <- adjustedRandIndex(spotify_sample$cluster_hac, spotify_sample$cluster_km)
+cat("ARI (HAC vs k-means) :", round(ari_hac_km, 3))
+
+```
+
+Pas ouf tjrs je bute encore, on passe au gmm, ptet mieux care gere + les cas de clusters "mélés"
+
+```{r}
+
+gmm <- Mclust(coords_pca_c, G = 6)
+
+# Résumé
+summary(gmm)
+
+# Assignation des clusters
+spotify_sample$cluster_gmm <- as.factor(gmm$classification)
+
+# Visualisation sur PCA
+ggplot(df_plot %>% mutate(cluster_gmm = spotify_sample$cluster_gmm),
+       aes(x = Dim1, y = Dim2, color = cluster_gmm)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  theme_minimal() +
+  labs(title = "GMM (k=6) sur coordonnées PCA")
+
+# Comparaison GMM vs genre
+ari_gmm_genre <- adjustedRandIndex(spotify_sample$cluster_gmm, spotify_sample$playlist_genre)
+cat("ARI (GMM vs genre) :", round(ari_gmm_genre, 3))
+
+# Comparaison GMM vs k-means
+ari_gmm_km <- adjustedRandIndex(spotify_sample$cluster_gmm, spotify_sample$cluster_km)
+cat("ARI (GMM vs k-means) :", round(ari_gmm_km, 3))
+
+# Comparaison GMM vs HAC
+ari_gmm_hac <- adjustedRandIndex(spotify_sample$cluster_gmm, spotify_sample$cluster_hac)
+cat("ARI (GMM vs HAC) :", round(ari_gmm_hac, 3))
+
+```
+
+
+
+```{r}
+
+
+# Profil moyen par cluster variables audio originales
+profil_km <- aggregate(quanti_sample, by = list(cluster = km$cluster), FUN = mean) #changer ici pr gmm et hac
+print(profil_km)
+
+
+# HAC
+#profil_hac <- aggregate(as.data.frame(quanti_sample), 
+                        #by = list(cluster = cutree(hac, k = 6)), FUN = mean)
+
+# GMM
+#profil_gmm <- aggregate(as.data.frame(quanti_sample), 
+                        #by = list(cluster = gmm$classification), FUN = mean)
+
+# Boxplots variables audio par cluster
+vars_audio <- c("energy", "danceability", "valence", "acousticness", "speechiness", "tempo")
+
+df_long <- cbind(spotify_sample, as.data.frame(quanti_sample)[, vars_audio]) %>%
+  pivot_longer(cols = all_of(vars_audio),
+               names_to = "variable",
+               values_to = "valeur")
+
+ggplot(df_long, aes(x = cluster_km, y = valeur, fill = cluster_km)) +
+  geom_boxplot(outlier.size = 0.3, alpha = 0.7) +
+  facet_wrap(~variable, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Profil audio des clusters (kmeans)", x = "Cluster", y = "Valeur normalisée")
+
+# Barplot genre par cluster
+ggplot(spotify_sample, aes(x = cluster_km, fill = playlist_genre)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  labs(title = "Composition des clusters par genre", y = "Proportion", x = "Cluster")
+
+# Barplot subgenre par cluster
+#ggplot(spotify_sample, aes(x = cluster_km, fill = playlist_subgenre)) +
+  #geom_bar(position = "fill") +
+  #scale_y_continuous(labels = scales::percent) +
+  #theme_minimal() +
+  #labs(title = "Composition des clusters par sous-genre", y = "Proportion", x = "Cluster")
+
+```
+
+vrmt pas ouf
+
+```{r}
+
+summary(manova(as.matrix(quanti_sample) ~ spotify_sample$playlist_genre))
+
+```
+
+```{r}
+
+# Variables discriminantes uniquement
+vars_discrim <- c("speechiness", "danceability", "energy", "loudness")
+
+quanti_discrim <- quanti_sample[, vars_discrim]
+
+# K-means
+pca_d <- PCA(quanti_discrim, ncp = 4, graph = FALSE)
+coords_pca_d <- pca_d$ind$coord
+
+set.seed(42)
+km_d <- kmeans(coords_pca_d, centers = 6, nstart = 25)
+spotify_sample$cluster_km_d <- as.factor(km_d$cluster)
+
+# HAC
+hac_d <- hclust(dist(coords_pca_d), method = "ward.D2")
+spotify_sample$cluster_hac_d <- as.factor(cutree(hac_d, k = 6))
+
+# GMM
+gmm_d <- Mclust(coords_pca_d, G = 6)
+spotify_sample$cluster_gmm_d <- as.factor(gmm_d$classification)
+
+# ARI vs genre
+cat("ARI k-means vs genre :", round(adjustedRandIndex(spotify_sample$cluster_km_d, spotify_sample$playlist_genre), 3), "\n")
+cat("ARI HAC vs genre :", round(adjustedRandIndex(spotify_sample$cluster_hac_d, spotify_sample$playlist_genre), 3), "\n")
+cat("ARI GMM vs genre :", round(adjustedRandIndex(spotify_sample$cluster_gmm_d, spotify_sample$playlist_genre), 3), "\n")
+
+```
+
+```{r}
+
+
+df_lda <- cbind(as.data.frame(quanti_sample), 
+                playlist_genre = spotify_sample$playlist_genre)
+
+lda_res <- lda(playlist_genre ~ ., data = df_lda)
+
+# Résumé
+print(lda_res)
+
+# Proportion de variance expliquée par chaque axe discriminant
+prop_var <- lda_res$svd^2 / sum(lda_res$svd^2)
+cat("Proportion de variance expliquée par axe :\n")
+print(round(prop_var, 3))
+
+# Prédiction et taux de bon classement
+pred_lda <- predict(lda_res, df_lda)
+confusion <- table(Prédit = pred_lda$class, Réel = df_lda$playlist_genre)
+print(confusion)
+
+# Taux de bon classement global
+taux <- sum(diag(confusion)) / sum(confusion)
+cat("Taux de bon classement :", round(taux, 3))
+
+# Visualisation sur les 2 premiers axes discriminants
+df_lda_plot <- data.frame(pred_lda$x[, 1:2], 
+                           genre = spotify_sample$playlist_genre)
+
+ggplot(df_lda_plot, aes(x = LD1, y = LD2, color = genre)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  stat_ellipse(aes(group = genre), type = "norm") +
+  theme_minimal() +
+  labs(title = "LDA — projection sur les 2 premiers axes discriminants")
+
+```
+
+```{r}
+
+# K-means
+set.seed(42)
+km_raw <- kmeans(quanti_sample, centers = 6, nstart = 25)
+spotify_sample$cluster_km_raw <- as.factor(km_raw$cluster)
+
+# HAC
+hac_raw <- hclust(dist(quanti_sample), method = "ward.D2")
+spotify_sample$cluster_hac_raw <- as.factor(cutree(hac_raw, k = 6))
+
+# GMM
+gmm_raw <- Mclust(quanti_sample, G = 6)
+spotify_sample$cluster_gmm_raw <- as.factor(gmm_raw$classification)
+
+# ARI vs genre
+cat("── Sur variables brutes ──\n")
+cat("ARI k-means vs genre :", round(adjustedRandIndex(spotify_sample$cluster_km_raw, spotify_sample$playlist_genre), 3), "\n")
+cat("ARI HAC vs genre     :", round(adjustedRandIndex(spotify_sample$cluster_hac_raw, spotify_sample$playlist_genre), 3), "\n")
+cat("ARI GMM vs genre     :", round(adjustedRandIndex(spotify_sample$cluster_gmm_raw, spotify_sample$playlist_genre), 3), "\n")
+
+
+cat("\n── Sur coordonnées PCA ──\n")
+cat("ARI k-means vs genre :", round(adjustedRandIndex(spotify_sample$cluster_km, spotify_sample$playlist_genre), 3), "\n")
+cat("ARI HAC vs genre     :", round(adjustedRandIndex(spotify_sample$cluster_hac, spotify_sample$playlist_genre), 3), "\n")
+cat("ARI GMM vs genre     :", round(adjustedRandIndex(spotify_sample$cluster_gmm, spotify_sample$playlist_genre), 3), "\n")
+
+```
+
+
+
+
+
+
+
+
+
 ```{r}
 
 ```
