@@ -575,6 +575,17 @@ print(results)
 ## Evolutions temporelles
 
 
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
 
 
 ## ACP
@@ -741,45 +752,247 @@ fviz_mca_var(df.mca, col.var = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "
 ```{r}
 fviz_mca_ind(df.mca, col.ind = "cos2", label = "none", pointsize = 0.5, ggtheme = theme_minimal())
 ```
-
+#NMF
 ```{r}
+library(NMF)
+# ── Préparation des données ───────────────────────────────────────────────────
+# NMF requiert des valeurs strictly positives
+# On sélectionne les variables quantitatives pertinentes
+# et on gère loudness qui est négatif
 
+nmf_vars <- c('danceability','energy','loudness','speechiness',
+              'acousticness','liveness','valence','tempo','duration_ms')
+data_nmf <- data %>%
+  dplyr::select(all_of(nmf_vars)) %>%
+  distinct() %>%
+  na.omit()
+
+# Normalisation Min-Max → valeurs dans [0, 1]
+# (obligatoire pour NMF : toutes valeurs >= 0)
+min_max_scale <- function(x) (x - min(x)) / (max(x) - min(x))
+data_nmf_scaled <- as.matrix(apply(data_nmf, 2, min_max_scale))
+
+# Petite valeur epsilon pour éviter les zéros stricts
+data_nmf_scaled[data_nmf_scaled == 0] <- 1e-10
+
+cat("Dimensions :", dim(data_nmf_scaled), "\n")
+cat("Min :", min(data_nmf_scaled), "| Max :", max(data_nmf_scaled), "\n")
 ```
 
 ```{r}
+# ── Choix du nombre de composantes (rank) ────────────────────────────────────
+# On teste r = 2 à 6 et on regarde la reconstruction error + cophenetic score
 
+set.seed(42)
+n_nmf <- 5000
+idx_nmf <- sample(nrow(data_nmf_scaled), n_nmf)
+data_nmf_scaled_sub <- data_nmf_scaled[idx_nmf, ]
+
+nmf_estim <- NMF::nmf(data_nmf_scaled_sub, rank = 2:6,
+                      method = "brunet",
+                      nrun = 10,
+                      .options = "v")
 ```
 
 ```{r}
-
+plot(nmf_estim)
 ```
 
 ```{r}
+summary(nmf_estim)
+```
 
+
+```{r}
+# ── Ajustement du modèle final ────────────────────────────────────────────────
+# Choisir r d'après le graphique ci-dessus :
+# - Cophenetic coefficient : chercher le coude / la chute
+# - Reconstruction error  : décroît avec r, chercher le coude
+
+r_optimal <- 3   # à ajuster d'après le graphique
+
+set.seed(42)
+nmf_model <- NMF::nmf(data_nmf_scaled, rank = r_optimal,
+                      method = "brunet",
+                      nrun = 30)
+
+cat("Erreur de reconstruction :", nmf_model@residuals, "\n")
 ```
 
 ```{r}
+# ── Extraction des matrices W et H ───────────────────────────────────────────
+# W (n × r) : coordonnées des individus dans l'espace NMF
+# H (r × p) : profils des composantes (contribution des variables)
 
+W <- basis(nmf_model)    # individus
+H <- coef(nmf_model)     # variables
+
+colnames(W) <- paste0("NMF", 1:r_optimal)
+rownames(H) <- paste0("NMF", 1:r_optimal)
+colnames(H) <- nmf_vars
+
+cat("W (individus) :", dim(W), "\n")
+cat("H (variables) :", dim(H), "\n")
 ```
 
 ```{r}
+# ── Interprétation des composantes : profils variables ───────────────────────
+# Heatmap de H : quelles variables contribuent à chaque composante ?
 
+H_df <- as.data.frame(t(H))
+H_df$variable <- rownames(H_df)
+H_long <- tidyr::pivot_longer(H_df, -variable,
+                               names_to = "composante",
+                               values_to = "poids")
+
+ggplot(H_long, aes(x = composante, y = variable, fill = poids)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(poids, 3)), size = 3) +
+  scale_fill_gradient(low = "white", high = "#457B9D") +
+  labs(title = "NMF — Profils des composantes (matrice H)",
+       subtitle = "Plus le poids est élevé, plus la variable contribue à la composante",
+       x = "Composante", y = "Variable", fill = "Poids") +
+  theme_minimal()
+
+
+subgenres <- data %>%
+  dplyr::select(all_of(nmf_vars), playlist_subgenre) %>%
+  na.omit() %>%
+  distinct(across(all_of(nmf_vars)), .keep_all = TRUE) %>%
+  pull(playlist_subgenre)
+
+cat("Nb subgenres :", length(subgenres), "\n")
+cat("Nb lignes W :", nrow(W), "\n")
+```
+NMF1 — "Musique acoustique et calme"
+
+Dominé par acousticness et duration_ms
+Faible energy et loudness
+→ Profil typique : ballades, folk, musique live, r&b acoustique
+
+NMF2 — "Musique électronique/dansante"
+
+Dominé par energy, loudness, tempo
+Faible acousticness
+→ Profil typique : EDM, electro house, pop dansante
+
+NMF3 — "Musique vocale/rap"
+
+Dominé par speechiness et danceability
+→ Profil typique : rap, hip-hop, spoken word
+
+```{r}
+# ── Visualisation des individus (W) colorés par playlist_subgenre ────────────
+# On projette sur les 2 premières composantes NMF
+
+
+
+df_W <- as.data.frame(W)
+df_W$subgenre <- subgenres
+
+ggplot(df_W, aes(x = NMF1, y = NMF2, color = subgenre)) +
+  geom_point(alpha = 0.4, size = 0.8) +
+  labs(title = "NMF — Projection des individus (NMF1 vs NMF2)",
+       subtitle = paste("r =", r_optimal, "composantes"),
+       x = "Composante NMF1", y = "Composante NMF2",
+       color = "Sous-genre") +
+  theme_minimal() +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
 ```
 
 ```{r}
+df_W$composante_dominante <- apply(W, 1, which.max)
+df_W$composante_dominante <- paste0("NMF", df_W$composante_dominante)
+# Ajouter la popularité à df_W
+popularite <- data %>%
+  dplyr::select(dplyr::all_of(nmf_vars), track_popularity) %>%
+  na.omit() %>%
+  dplyr::distinct(dplyr::across(dplyr::all_of(nmf_vars)), .keep_all = TRUE) %>%
+  dplyr::pull(track_popularity)
 
+df_W$popularite <- popularite
+
+# Popularité moyenne par composante dominante
+df_W %>%
+  group_by(composante_dominante) %>%
+  summarise(popularite_moy = mean(popularite, na.rm = TRUE), n = n())
 ```
+NMF1 — "Acoustique/calme" est le plus populaire (42.6)
+
+Paradoxalement, c'est le profil le moins représenté (4 935 morceaux) mais le plus populaire en moyenne
+Suggère que les morceaux acoustiques/émotionnels ont une forte popularité unitaire sur Spotify (cela peut être dû à une quantité moindre d'artistes amateur : c'est un genre de musique qui est majoritairement fait par des artistes déjà populairements établis)
+
+
+NMF2 — "Électronique/dansant" est le moins populaire (37.3)
+
+Profil dominant du dataset (12 549 morceaux, presque la moitié)
+La surreprésentation EDM/electro dans les playlists ne se traduit pas en popularité individuelle élevée, cela peut être dû à une quantité importante d'artistes amateurs
+
+
+NMF3 — "Vocal/rap" est intermédiaire (40.1)
+
+10 144 morceaux, popularité proche de la moyenne globale du dataset (~42)
+
+## avec la popularité > X : on enlève les artistes très amateurs
 
 ```{r}
+# ── NMF : Analyse complète ────────────────────────────────────────────────────
 
-```
+library(tidyr)
+popularité_mini=90
 
-```{r}
+# ── 1. Heatmap de la matrice H (profils des composantes) ─────────────────────
+H_df <- as.data.frame(t(H))
+H_df$variable <- rownames(H_df)
+H_long <- pivot_longer(H_df, -variable,
+                       names_to  = "composante",
+                       values_to = "poids")
 
-```
+ggplot(H_long, aes(x = composante, y = variable, fill = poids)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(poids, 3)), size = 3) +
+  scale_fill_gradient(low = "white", high = "#457B9D") +
+  labs(title    = "NMF — Profils des composantes (matrice H)",
+       subtitle = "Plus le poids est élevé, plus la variable contribue à la composante",
+       x = "Composante", y = "Variable", fill = "Poids") +
+  theme_minimal()
 
-```{r}
+# ── 2. Composante dominante par morceau ──────────────────────────────────────
+df_W$composante_dominante <- paste0("NMF", apply(W, 1, which.max))
 
+# ── 3. Récupérer la popularité (distinct sur nmf_vars) ───────────────────────
+popularite <- data %>%
+  dplyr::select(dplyr::all_of(nmf_vars), track_popularity) %>%
+  na.omit() %>%
+  dplyr::distinct(dplyr::across(dplyr::all_of(nmf_vars)), .keep_all = TRUE) %>%
+  dplyr::pull(track_popularity)
+
+df_W$popularite <- popularite
+
+# ── 4. Tableau popularité moyenne (popularité > 0 uniquement) ────────────────
+pop_summary <- df_W %>%
+  filter(popularite >= popularité_mini) %>%
+  group_by(composante_dominante) %>%
+  summarise(
+    popularite_moy = round(mean(popularite, na.rm = TRUE), 2),
+    n_total        = n()
+  )
+
+print(pop_summary)
+
+# ── 5. Boxplot popularité par composante (popularité > 0) ────────────────────
+df_W %>%
+  filter(popularite > 0) %>%
+  ggplot(aes(x = composante_dominante, y = popularite,
+             fill = composante_dominante)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.2) +
+  stat_summary(fun = mean, geom = "point",
+               shape = 18, size = 3, color = "black") +  # point = moyenne
+  labs(title    = "Popularité par profil NMF dominant (morceaux populaires uniquement)",
+       subtitle = "Morceaux avec popularité > 0 | ◆ = moyenne",
+       x = "Composante NMF", y = "Popularité") +
+  theme_minimal() +
+  theme(legend.position = "none")
 ```
 
 ```{r}
