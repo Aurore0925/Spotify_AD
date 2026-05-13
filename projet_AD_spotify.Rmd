@@ -93,7 +93,7 @@ data$playlist_genre <- factor(data$playlist_genre, levels=c("pop","rap","edm","r
 cat("\nRépartition des genres après la mise en facteurs :\n")
 table(data$playlist_genre, useNA = "ifany")
 ```
-Variable instrumentalness :
+Variable "instrumentalness" :
 
 " Instrumentalness : Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0." (sur KAGGLE)
 
@@ -110,6 +110,34 @@ str(data)
 cat("\n-------------------------------------------------------\n\n")
 summary(data)
 ```
+Variable "track_album_release_date" :
+
+```{r}
+# Transformation de la variable track_album_release_date sur une copie du jeu de données
+
+data_modified <- data
+head(data_modified, n=c(20))
+
+# Création d'une variable pour l'année et une variable pour le mois
+data_modified$track_album_release_year <- as.factor(substr(data_modified$track_album_release_date, 1, 4))
+data_modified$track_album_release_month <- ifelse(nchar(data_modified$track_album_release_date) >= 7, as.numeric(substr(data$track_album_release_date, 6, 7)), NA)
+data_modified$track_album_release_month <- factor(substr(data_modified$track_album_release_date, 6, 7), levels=c("01","02","03","04","05","06","07","08","09","10","11","12"), labels=c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+
+# Retrait de la variable track_album_release_date
+col_idx = which(names(data_modified) == "track_album_release_date")
+data_modified <- data_modified[, -col_idx]
+cat('Retrait de la colonne n°', col_idx)
+
+# Vérification
+head(data_modified, n=c(20))
+```
+```{r, include=FALSE}
+# Application de la transformation au jeu de données
+#data <- data_modified
+```
+
+
+
 
 ### Valeurs manquantes et doublons
 
@@ -156,10 +184,16 @@ cat("Lignes supprimées (NA) :", n_supprimes, "\n")
 cat("Lignes restantes :", n_apres, "\n")
 ```
 
+Qualité du jeu de données : Il y a extrêmement peu de valeurs manquantes. En revanche, les méthodes pour calculer les variables telles que ... (à finir/détailler)
+
+
+
 # Analyse unidimentionnelle
 
 ## Variables quantitatives
 ```{r}
+# Création d'un jeu de données data_quanti avec les variables quantitatives seulement
+
 quantit <- c('track_popularity','danceability','energy','loudness', 'speechiness','acousticness', 'liveness','valence','tempo','duration_ms')
 data_quanti <- data[,quantit]
 cat("dimensions de data_quanti : ")
@@ -239,6 +273,9 @@ mtext(paste("Variable :", var), outer = TRUE, cex = 1.5)
 
 ## Variables qualitatives
 ```{r, echo=FALSE}
+# Création d'un jeu de données data_quali avec les variables qualitatives seulement
+
+
 qualit <- c("playlist_genre", "playlist_subgenre", "mode", "key","instrumentalness_quali")
 data_quali <- data[,qualit]
 cat("dimensions de data_quali : ")
@@ -534,6 +571,11 @@ for (i in 1:(ncol(data_quanti) - 1)) {
 }
 print(results)
 ```
+
+## Evolutions temporelles
+
+
+
 
 ## ACP
 
