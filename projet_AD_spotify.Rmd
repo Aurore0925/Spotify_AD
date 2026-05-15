@@ -3,12 +3,16 @@ title: "Analyse du jeu de données '30000 Spotify Songs'"
 author: "Aurore, Yann, Ayman, Nhan"
 date: "2026-05-06"
 output:
-  pdf_document: default
+  pdf_document:
     latex_engine: xelatex
   html_document: default
 ---
 
 Jeu de données "30000 Spotify Songs" disponible sur KAGGLE : <https://www.kaggle.com/datasets/joebeachcapital/30000-spotify-songs>.
+
+```{r}
+```
+
 
 ```{r, include=FALSE}
 library(ggplot2)
@@ -24,8 +28,12 @@ library(glmnet)
 library(ggfortify)
 library(pROC)
 library(ROCR)
-library(dplyr)
 library(MASS)
+library(Biobase)
+library(NMF)
+library(ggpubr)
+library(mclust)
+library(dplyr) #à charger en dernier pour le prioriser quand il y a des conflits
 ```
 
 # Import des données et pré-traitement
@@ -58,87 +66,6 @@ summary(data)
 Individus : morceaux. 
 Nombre d'individus : 32 833.
 
-### Variables et leurs types
-
-Variables enregistrées : 23.
-
-Type des variables en l'état initial :
-  Variables qualitatives : "track_id", "track_name", "track_artist", "track_album_id", "track_album_name", "track_album_release_date", "playlist_name", "playlist_id", "playlist_genre", "playlist_subgenre".
-  Variables quantitatives : "track_popularity", "danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "duration_ms".
-
-Premières transformations des variables :
-- La variable "mode" doit plutôt être interprétée par le logiciel comme une variable qualitative à deux modalités ;
-- Même chose pour la variable "key", qui aura 13 modalités (12 clés qui vont de 0 à 11 et -1 lorsqu'aucune clé n'est détectée sur le morceau ;
-- La variable "playlist_genre" ne compte que six modalité donc elle peut également être mise en facteur.
-
-```{r, echo=FALSE}
-# Mode
-cat("\nRépartition originale des modes :\n")
-table(data$mode, useNA = "ifany") # on regarde quelle est la répartition des modalités
-data$mode <- factor(data$mode, levels=c("0","1")) # tonalité : 1=majeur, 0=mineur
-cat("\nRépartition des modes après la mise en facteurs :\n")
-table(data$mode, useNA = "ifany") # on vérifie que la répartition des modalités se soit faite correctement
-
-# Key
-cat("\nRépartition originale des clés :\n")
-table(data$key, useNA = "ifany")
-data$key <- factor(data$key, levels=c("-1","0","1","2","3","4","5","6","7","8","9","10","11"))
-cat("\nRépartition des clés après la mise en facteurs :\n")
-table(data$key, useNA = "ifany")
-
-# Playlist_genre
-cat("\nRépartition originale des genres :\n")
-table(data$playlist_genre, useNA = "ifany")
-data$playlist_genre <- factor(data$playlist_genre, levels=c("pop","rap","edm","rock","latin","r&b"))
-cat("\nRépartition des genres après la mise en facteurs :\n")
-table(data$playlist_genre, useNA = "ifany")
-```
-Variable "instrumentalness" :
-
-" Instrumentalness : Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0." (sur KAGGLE)
-
-```{r}
-# Transformation de la variable instrumentalness
-data$instrumentalness_quali <- ifelse(data$instrumentalness <= 0.5, 0, 1)
-data$instrumentalness_quali <- factor(data$instrumentalness_quali,
-                                      levels = c(0, 1),
-                                      labels = c("faible", "élevée"))
-```
-
-```{r, echo=FLASE}
-str(data)
-cat("\n-------------------------------------------------------\n\n")
-summary(data)
-```
-Variable "track_album_release_date" :
-
-```{r}
-# Transformation de la variable track_album_release_date sur une copie du jeu de données
-
-data_modified <- data
-head(data_modified, n=c(20))
-
-# Création d'une variable pour l'année et une variable pour le mois
-data_modified$track_album_release_year <- as.factor(substr(data_modified$track_album_release_date, 1, 4))
-data_modified$track_album_release_month <- ifelse(nchar(data_modified$track_album_release_date) >= 7, as.numeric(substr(data$track_album_release_date, 6, 7)), NA)
-data_modified$track_album_release_month <- factor(substr(data_modified$track_album_release_date, 6, 7), levels=c("01","02","03","04","05","06","07","08","09","10","11","12"), labels=c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
-
-# Retrait de la variable track_album_release_date
-col_idx = which(names(data_modified) == "track_album_release_date")
-data_modified <- data_modified[, -col_idx]
-cat('Retrait de la colonne n°', col_idx)
-
-# Vérification
-head(data_modified, n=c(20))
-```
-```{r, include=FALSE}
-# Application de la transformation au jeu de données
-#data <- data_modified
-```
-
-
-
-
 ### Valeurs manquantes et doublons
 
 D'après les informations données sur le jeu de données, la variable "key" peut prendre la valeur -1 lorsque la clé du morceau n'a pas été détectée. Cependant, on voit qu'en pratique elle ne prend jamais la valeur -1 donc cela ne posera pas de problème lors de la détection de données manquantes dans le jeu de données.
@@ -154,7 +81,7 @@ colSums(is.na(data))
 cat("---\n")
 
 cat("Données manquantes dans chaque ligne (chanson) où c'est > 0 : \n")
-row_missing_value = rowSums(is.na(data)) #nb de missing values dans chaque ligne
+row_missing_value = rowSums(is.na(data)) #nb de missing values dans chaque ligne sans compter la variable track_album_release_month qui a beaucoup de missing values
 cat(row_missing_value[row_missing_value != 0])
 cat('\nNuméro de ligne associé : \n')
 row_idx_na <- which(row_missing_value > 0) # indices des lignes avec des NA
@@ -184,7 +111,95 @@ cat("Lignes supprimées (NA) :", n_supprimes, "\n")
 cat("Lignes restantes :", n_apres, "\n")
 ```
 
-Qualité du jeu de données : Il y a extrêmement peu de valeurs manquantes. En revanche, les méthodes pour calculer les variables telles que ... (à finir/détailler)
+### Variables et leurs types
+
+Variables enregistrées : 23.
+
+Type des variables en l'état initial :
+  Variables qualitatives : "track_id", "track_name", "track_artist", "track_album_id", "track_album_name", "track_album_release_date", "playlist_name", "playlist_id", "playlist_genre", "playlist_subgenre".
+  Variables quantitatives : "track_popularity", "danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "duration_ms".
+
+Premières transformations des variables :
+- La variable "mode" doit plutôt être interprétée par le logiciel comme une variable qualitative à deux modalités ;
+- Même chose pour la variable "key", qui aura 13 modalités (12 clés qui vont de 0 à 11 et -1 lorsqu'aucune clé n'est détectée sur le morceau ;
+- La variable "playlist_genre" ne compte que six modalité donc elle peut également être mise en facteur.
+
+```{r, echo=FALSE}
+# Mode
+cat("\nRépartition originale des modes :\n")
+table(data$mode, useNA = "ifany") # on regarde quelle est la répartition des modalités
+data$mode <- factor(data$mode, levels=c("0","1")) # tonalité : 1=majeur, 0=mineur
+cat("\nRépartition des modes après la mise en facteurs :\n")
+table(data$mode, useNA = "ifany") # on vérifie que la répartition des modalités se soit faite correctement
+
+# Key
+cat("\nRépartition originale des clés :\n")
+table(data$key, useNA = "ifany")
+data$key <- factor(data$key, levels=c("0","1","2","3","4","5","6","7","8","9","10","11"))
+cat("\nRépartition des clés après la mise en facteurs :\n")
+table(data$key, useNA = "ifany")
+
+# Playlist_genre
+cat("\nRépartition originale des genres :\n")
+table(data$playlist_genre, useNA = "ifany")
+data$playlist_genre <- factor(data$playlist_genre, levels=c("pop","rap","edm","rock","latin","r&b"))
+cat("\nRépartition des genres après la mise en facteurs :\n")
+table(data$playlist_genre, useNA = "ifany")
+```
+*Variable "instrumentalness" :*
+
+" Instrumentalness : Predicts whether a track contains no vocals. "Ooh" and "aah" sounds are treated as instrumental in this context. Rap or spoken word tracks are clearly "vocal". The closer the instrumentalness value is to 1.0, the greater likelihood the track contains no vocal content. Values above 0.5 are intended to represent instrumental tracks, but confidence is higher as the value approaches 1.0." (sur KAGGLE)
+
+```{r}
+# Transformation de la variable instrumentalness
+data$instrumentalness_quali <- ifelse(data$instrumentalness <= 0.5, 0, 1)
+data$instrumentalness_quali <- factor(data$instrumentalness_quali,
+                                      levels = c(0, 1),
+                                      labels = c("faible", "élevée"))
+```
+
+```{r, echo=FALSE}
+str(data)
+cat("\n-------------------------------------------------------\n\n")
+```
+*Variable "track_album_release_date" :*
+
+```{r}
+# Transformation de la variable track_album_release_date sur une copie du jeu de données
+
+data_modified <- data
+head(data_modified, n=c(20))
+
+# Création d'une variable pour l'année et une variable pour le mois
+data_modified$track_album_release_year <- as.factor(substr(data_modified$track_album_release_date, 1, 4))
+data_modified$track_album_release_year <- as.integer(as.character(data_modified$track_album_release_year))
+
+data_modified$track_album_release_month <- ifelse(nchar(data_modified$track_album_release_date) >= 7, as.numeric(substr(data$track_album_release_date, 6, 7)), NA)
+data_modified$track_album_release_month <- factor(substr(data_modified$track_album_release_date, 6, 7), levels=c("01","02","03","04","05","06","07","08","09","10","11","12"), labels=c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+
+# Retrait de la variable track_album_release_date
+col_idx = which(names(data_modified) == "track_album_release_date")
+data_modified <- data_modified[, -col_idx]
+cat('Retrait de la colonne n°', col_idx)
+
+# Vérification
+head(data_modified, n=c(20))
+```
+```{r, include=FALSE}
+# Application de la transformation au jeu de données
+data <- data_modified
+```
+
+```{r}
+colSums(is.na(data))
+```
+1855 valeurs manquantes pour la variable track_album_release_month 
+
+
+
+*Qualité du jeu de données :* 
+
+Il y a extrêmement peu de valeurs manquantes. En revanche, les méthodes pour calculer les variables telles que ... (à finir/détailler)
 
 
 
@@ -194,11 +209,14 @@ Qualité du jeu de données : Il y a extrêmement peu de valeurs manquantes. En 
 ```{r}
 # Création d'un jeu de données data_quanti avec les variables quantitatives seulement
 
-quantit <- c('track_popularity','danceability','energy','loudness', 'speechiness','acousticness', 'liveness','valence','tempo','duration_ms')
+quantit <- c('track_popularity','danceability','energy','loudness', 'speechiness','acousticness', 'liveness','valence','tempo','duration_ms','track_album_release_year')
 data_quanti <- data[,quantit]
-cat("dimensions de data_quanti : ")
-dim(data_quanti)
+cat("dimensions de data_quanti : ", dim(data_quanti))
 head(data_quanti)
+```
+
+```{r}
+summary(data_quanti)
 ```
 
 ```{r, echo=FALSE}
@@ -272,11 +290,11 @@ mtext(paste("Variable :", var), outer = TRUE, cex = 1.5)
 ```
 
 ## Variables qualitatives
+
 ```{r, echo=FALSE}
 # Création d'un jeu de données data_quali avec les variables qualitatives seulement
 
-
-qualit <- c("playlist_genre", "playlist_subgenre", "mode", "key","instrumentalness_quali")
+qualit <- c("playlist_genre", "playlist_subgenre", "mode", "key","instrumentalness_quali","track_album_release_month")
 data_quali <- data[,qualit]
 cat("dimensions de data_quali : ")
 dim(data_quali)
@@ -328,8 +346,8 @@ for (var in qualit) {
 }
 ```
 ```{r, echo=FALSE}
-#qualit2 <- c("track_name", "track_artist", "track_album_name", "track_album_release_date", "playlist_name", "playlist_subgenre")
-qualit2 <- c("track_name", "track_artist", "track_album_name", "track_album_release_date", "playlist_name", "playlist_genre", "playlist_subgenre")
+#qualit2 <- c("track_name", "track_artist", "track_album_name", "playlist_name", "playlist_subgenre", "track_album_release_month")
+qualit2 <- c("track_name", "track_artist", "track_album_name", "playlist_name", "playlist_genre", "playlist_subgenre", "track_album_release_month")
 data_quali2 <- data[,qualit2]
 cat("dimensions de data_quali2 : ")
 dim(data_quali2)
@@ -495,7 +513,6 @@ for (var_c in qualit) {
 
 ```{r}
 qualit <- c("playlist_genre", "playlist_subgenre", "mode", "key","instrumentalness_quali")
-library(corrplot)
 
 # Matrices résultats
 mat_pval  <- matrix(NA, nrow = length(quantit), ncol = length(qualit),
@@ -555,21 +572,22 @@ corrplot(-log10(mat_pval_plot),   # -log10 pour mieux voir les petites p-valeurs
 ```
 
 ```{r}
-results <- data.frame()
-
-for (i in 1:(ncol(data_quanti) - 1)) {
-  for (j in (i + 1):ncol(data_quanti)) {
-    test <- chisq.test(table(data_quanti[[i]], data_quanti[[j]]))
-    
-    results <- rbind(results, data.frame(
-      var1    = names(data_quanti)[i],
-      var2    = names(data_quanti)[j],
-      chi_sq  = round(test$statistic, 3),
-      p_value = test$p.value
-    ))
-  }
-}
-print(results)
+# results <- data.frame()
+# 
+# for (i in 1:(ncol(data_quanti) - 1)) {
+#   for (j in (i + 1):ncol(data_quanti)) {
+#     test <- chisq.test(table(data_quanti[[i]], data_quanti[[j]]))
+# 
+#     results <- rbind(results, data.frame(
+#       var1    = names(data_quanti)[i],
+#       var2    = names(data_quanti)[j],
+#       chi_sq  = round(test$statistic, 3),
+#       p_value = test$p.value
+#     ))
+#   }
+# }
+# print(results)
+cat("erreurs sur les tests du chi-2")
 ```
 
 ## Evolutions temporelles
@@ -607,7 +625,7 @@ summary(num_df)
 ```
 
 ```{r}
-cat_df <- df %>% dplyr :: select(!where(is.numeric)) %>% na.omit() 
+cat_df <- data %>% dplyr::select(!where(is.numeric)) %>% na.omit() 
 ```
 
 ```{r}
@@ -627,7 +645,7 @@ sum(num_df$instrumentalness == 0)
 ```
 
 ```{r}
-cat_df$bool_instrumentalness <- ifelse(df$instrumentalness == 0, "Zero", "Non-Zero")
+cat_df$bool_instrumentalness <- ifelse(data$instrumentalness == 0, "Zero", "Non-Zero")
 ```
 
 ```{r}
@@ -682,46 +700,46 @@ print(results)
 ```
 
 ```{r}
-df.acp <- PCA(num_df,scale.unit = TRUE)
+data.acp <- PCA(num_df,scale.unit = TRUE)
 ```
 
 ```{r}
-fviz_pca_var(df.acp, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+fviz_pca_var(data.acp, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
 ```
 
 ```{r}
-fviz_pca_var(df.acp, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),axes= c(3,4),repel = TRUE)
+fviz_pca_var(data.acp, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),axes= c(3,4),repel = TRUE)
 ```
 
 ```{r}
-fviz_pca_ind(df.acp,col.ind = "cos2",label='none',gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),pointsize = 0.5)
+fviz_pca_ind(data.acp,col.ind = "cos2",label='none',gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),pointsize = 0.5)
 ```
 
 ```{r}
-fviz_pca_ind(df.acp,col.ind = "cos2",label='none',gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),pointsize = 0.5,axes = c(3,4))
+fviz_pca_ind(data.acp,col.ind = "cos2",label='none',gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),pointsize = 0.5,axes = c(3,4))
 ```
 
 ```{r}
-fviz_eig(df.acp)
+fviz_eig(data.acp)
 ```
 
 ```{r}
-genre_num_df <- df %>% dplyr :: select(playlist_genre, where(is.numeric)) %>% na.omit()
+genre_num_df <- data %>% dplyr :: select(playlist_genre, where(is.numeric)) %>% na.omit()
 genre_num_df$playlist_genre <- as.factor(genre_num_df$playlist_genre)
-df.lda <- lda(playlist_genre ~ ., data = genre_num_df)
-df.lda.pred <- predict(df.lda)
+data.lda <- lda(playlist_genre ~ ., data = genre_num_df)
+data.lda.pred <- predict(data.lda)
 ```
 
 ```{r}
-fviz_pca_ind(df.acp, col.ind = df.lda.pred$class,label='none',pointsize = 0.5)
+fviz_pca_ind(data.acp, col.ind = data.lda.pred$class,label='none',pointsize = 0.5)
 ```
 
 ```{r}
-fviz_pca_ind(df.acp, col.ind = df$playlist_genre,label='none',pointsize = 0.5)
+fviz_pca_ind(data.acp, col.ind = data$playlist_genre,label='none',pointsize = 0.5)
 ```
 
 ```{r}
-nlevels(df$playlist_subgenre)
+nlevels(data$playlist_subgenre)
 ```
 
 ```{r}
@@ -729,32 +747,33 @@ table(cat_df)
 ```
 
 ```{r}
-df.mca <- MCA(cat_df, graph = TRUE)
-print(df.mca)
+data.mca <- MCA(cat_df, graph = TRUE)
+print(data.mca)
 ```
 
 ```{r}
-df.mca$eig
+data.mca$eig
 ```
 
 ```{r}
-fviz_screeplot(df.mca, addlabels = FALSE,ncp = 36)
+fviz_screeplot(data.mca, addlabels = FALSE,ncp = 36)
 ```
 
 ```{r}
-fviz_mca_biplot(df.mca, label = "none", ggtheme = theme_minimal())
+fviz_mca_biplot(data.mca, label = "none", ggtheme = theme_minimal())
 ```
 
 ```{r}
-fviz_mca_var(df.mca, col.var = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), repel = TRUE)
+fviz_mca_var(data.mca, col.var = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), repel = TRUE)
 ```
 
 ```{r}
-fviz_mca_ind(df.mca, col.ind = "cos2", label = "none", pointsize = 0.5, ggtheme = theme_minimal())
+fviz_mca_ind(data.mca, col.ind = "cos2", label = "none", pointsize = 0.5, ggtheme = theme_minimal())
 ```
+
+
 #NMF
 ```{r}
-library(NMF)
 # ── Préparation des données ───────────────────────────────────────────────────
 # NMF requiert des valeurs strictly positives
 # On sélectionne les variables quantitatives pertinentes
@@ -998,7 +1017,7 @@ df_W %>%
 
 # Clustering
 
-on regarde (sur un echantillon reduit, temps de calcul oblige) les graphes silhouete pour k means, wss c'est l'inertie intraclasse,
+on regarde (sur un echantillon reduit, temps de calcul oblige) les graphes silhouette pour k means, wss c'est l'inertie intraclasse,
 
 ```{r}
 
@@ -1033,7 +1052,7 @@ Dim2 : danceability + valence + speechiness s'opposent à duration + tempo
 Dim3 : pas mal de track_popularity entre 3-4 , un peu indé des variables audio ?
 Dim4 : liveness + speechiness
 
-on fait alors k-means sur les coordonnées de la pca, on se dit k = 6 car 6 genre a priori 
+on fait alors k-means sur les coordonnées de la pca, on se dit k = 6 car 6 genres a priori 
 
 ```{r}
 
