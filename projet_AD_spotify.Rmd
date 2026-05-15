@@ -771,7 +771,6 @@ fviz_mca_var(data.mca, col.var = "cos2", gradient.cols = c("#00AFBB", "#E7B800",
 fviz_mca_ind(data.mca, col.ind = "cos2", label = "none", pointsize = 0.5, ggtheme = theme_minimal())
 ```
 
-
 #NMF
 ```{r}
 # ── Préparation des données ───────────────────────────────────────────────────
@@ -821,14 +820,14 @@ plot(nmf_estim)
 summary(nmf_estim)
 ```
 
-
+Bien que r=3 présente un Cophenetic légèrement supérieur, r=4 a été retenu car chaque composante présente une variable clairement dominante, rendant les profils musicalement interprétables.
 ```{r}
 # ── Ajustement du modèle final ────────────────────────────────────────────────
 # Choisir r d'après le graphique ci-dessus :
 # - Cophenetic coefficient : chercher le coude / la chute
 # - Reconstruction error  : décroît avec r, chercher le coude
 
-r_optimal <- 3   # à ajuster d'après le graphique
+r_optimal <- 4   # à ajuster d'après le graphique
 
 set.seed(42)
 nmf_model <- NMF::nmf(data_nmf_scaled, rank = r_optimal,
@@ -883,22 +882,7 @@ subgenres <- data %>%
 cat("Nb subgenres :", length(subgenres), "\n")
 cat("Nb lignes W :", nrow(W), "\n")
 ```
-NMF1 — "Musique acoustique et calme"
 
-Dominé par acousticness et duration_ms
-Faible energy et loudness
-→ Profil typique : ballades, folk, musique live, r&b acoustique
-
-NMF2 — "Musique électronique/dansante"
-
-Dominé par energy, loudness, tempo
-Faible acousticness
-→ Profil typique : EDM, electro house, pop dansante
-
-NMF3 — "Musique vocale/rap"
-
-Dominé par speechiness et danceability
-→ Profil typique : rap, hip-hop, spoken word
 
 ```{r}
 # ── Visualisation des individus (W) colorés par playlist_subgenre ────────────
@@ -920,37 +904,34 @@ ggplot(df_W, aes(x = NMF1, y = NMF2, color = subgenre)) +
 ```
 
 ```{r}
-df_W$composante_dominante <- apply(W, 1, which.max)
-df_W$composante_dominante <- paste0("NMF", df_W$composante_dominante)
-# Ajouter la popularité à df_W
-popularite <- data %>%
-  dplyr::select(dplyr::all_of(nmf_vars), track_popularity) %>%
-  na.omit() %>%
-  dplyr::distinct(dplyr::across(dplyr::all_of(nmf_vars)), .keep_all = TRUE) %>%
-  dplyr::pull(track_popularity)
+# Popularité par profil pour différents seuils
+seuils <- c(0, 20, 40, 60, 80)
 
-df_W$popularite <- popularite
-
-# Popularité moyenne par composante dominante
-df_W %>%
-  group_by(composante_dominante) %>%
-  summarise(popularite_moy = mean(popularite, na.rm = TRUE), n = n())
+map_dfr(seuils, function(s) {
+  df_W %>%
+    filter(popularite >= s) %>%
+    group_by(composante_dominante) %>%
+    summarise(
+      popularite_moy = round(mean(popularite, na.rm = TRUE), 1),
+      n              = n(),
+      .groups        = "drop"
+    ) %>%
+    mutate(seuil = paste0("pop >= ", s))
+}) %>%
+  group_by(seuil) %>%
+  mutate(valeur_normalisee = (popularite_moy - min(popularite_moy)) / 
+                             (max(popularite_moy) - min(popularite_moy))) %>%
+  ungroup() %>%
+  ggplot(aes(x = composante_dominante, y = seuil, fill = valeur_normalisee)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = paste0(popularite_moy, "\n(n=", n, ")")), size = 3) +
+  scale_fill_gradient(low = "white", high = "#E63946") +
+  scale_y_discrete(limits = paste0("pop >= ", rev(seuils))) +
+  labs(title    = "Popularité moyenne par profil NMF selon le seuil de filtrage",
+       x = "Profil NMF", y = "Seuil de popularité", fill = "Valeur relative") +
+  theme_minimal()
 ```
-NMF1 — "Acoustique/calme" est le plus populaire (42.6)
 
-Paradoxalement, c'est le profil le moins représenté (4 935 morceaux) mais le plus populaire en moyenne
-Suggère que les morceaux acoustiques/émotionnels ont une forte popularité unitaire sur Spotify (cela peut être dû à une quantité moindre d'artistes amateur : c'est un genre de musique qui est majoritairement fait par des artistes déjà populairements établis)
-
-
-NMF2 — "Électronique/dansant" est le moins populaire (37.3)
-
-Profil dominant du dataset (12 549 morceaux, presque la moitié)
-La surreprésentation EDM/electro dans les playlists ne se traduit pas en popularité individuelle élevée, cela peut être dû à une quantité importante d'artistes amateurs
-
-
-NMF3 — "Vocal/rap" est intermédiaire (40.1)
-
-10 144 morceaux, popularité proche de la moyenne globale du dataset (~42)
 
 ## avec la popularité > X : on enlève les artistes très amateurs
 
@@ -971,8 +952,7 @@ ggplot(H_long, aes(x = composante, y = variable, fill = poids)) +
   geom_tile(color = "white") +
   geom_text(aes(label = round(poids, 3)), size = 3) +
   scale_fill_gradient(low = "white", high = "#457B9D") +
-  labs(title    = "NMF — Profils des composantes (matrice H)",
-       subtitle = "Plus le poids est élevé, plus la variable contribue à la composante",
+  labs(title    = "NMF — Profils des composantes",
        x = "Composante", y = "Variable", fill = "Poids") +
   theme_minimal()
 
@@ -1012,6 +992,54 @@ df_W %>%
        x = "Composante NMF", y = "Popularité") +
   theme_minimal() +
   theme(legend.position = "none")
+```
+ Visaltisation des valeurs moyennes des composantes
+```{r}
+data %>%
+  dplyr::select(dplyr::all_of(nmf_vars)) %>%
+  na.omit() %>%
+  dplyr::distinct(dplyr::across(dplyr::all_of(nmf_vars)), .keep_all = TRUE) %>%
+  mutate(composante = df_W$composante_dominante) %>%
+  group_by(composante) %>%
+  summarise(across(all_of(nmf_vars), ~round(mean(.x, na.rm=TRUE), 3))) %>%
+  pivot_longer(-composante, names_to = "variable", values_to = "valeur") %>%
+  group_by(variable) %>%
+  mutate(valeur_normalisee = (valeur - min(valeur)) / (max(valeur) - min(valeur))) %>%
+  ungroup() %>%
+  ggplot(aes(x = composante, y = variable, fill = valeur_normalisee)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = valeur), size = 3) +
+  scale_fill_gradient(low = "white", high = "#E63946") +
+  labs(title    = "NMF — Valeurs moyennes réelles par profil",
+       x = "Composante", y = "Variable", fill = "Valeur relative") +
+  theme_minimal()
+```
+
+
+visualisation des valeurs moyenne avec le gradient de couleur du poid
+```{r}
+# Matrice H en format long
+H_long <- as.data.frame(t(H)) %>%
+  rownames_to_column("variable") %>%
+  pivot_longer(-variable, names_to = "composante", values_to = "poids")
+
+# Valeurs moyennes réelles
+data %>%
+  dplyr::select(dplyr::all_of(nmf_vars)) %>%
+  na.omit() %>%
+  dplyr::distinct(dplyr::across(dplyr::all_of(nmf_vars)), .keep_all = TRUE) %>%
+  mutate(composante = df_W$composante_dominante) %>%
+  group_by(composante) %>%
+  summarise(across(all_of(nmf_vars), ~round(mean(.x, na.rm=TRUE), 3))) %>%
+  pivot_longer(-composante, names_to = "variable", values_to = "valeur") %>%
+  left_join(H_long, by = c("composante", "variable")) %>%
+  ggplot(aes(x = composante, y = variable, fill = poids)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = valeur), size = 3) +
+  scale_fill_gradient(low = "white", high = "#E63946") +
+  labs(title    = "NMF — Valeurs moyennes réelles par profil",
+       x = "Composante", y = "Variable", fill = "Poids (H)") +
+  theme_minimal()
 ```
 
 
