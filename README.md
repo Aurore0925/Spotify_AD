@@ -1,13 +1,14 @@
 # Spotify_AD — Analyse de Données sur Spotify
 
 Ce projet explore un dataset de 30 000 chansons Spotify à travers des techniques
-de clustering, de réduction de dimension linéaire et non linéaire.
+de clustering, de réduction de dimension linéaire et non linéaire avec pour objectif de répondre aux questions présentes dans le fichier questionnement-interpretation
 
 ## Organisation du dépôt
 
-├── Projet.ipynb      # Réduction de dimension, analyse et clustering (R)
-├── Data.csv                   # Dataset Spotify (~30 000 chansons)
-└── README.md                  # Ce fichier
+├── Projet.ipynb                                # Réduction de dimension, analyse et clustering (R)
+├── Data.csv                                    # Dataset Spotify (~30 000 chansons)
+├── questionnement-interpretation.docx          # Ensemble de questions posées sur le jeu de données
+└── README.md                                   # Ce fichier
 
 ## Source des données
 
