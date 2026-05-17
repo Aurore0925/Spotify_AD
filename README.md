@@ -5,7 +5,7 @@ de clustering, de réduction de dimension linéaire et non linéaire.
 
 ## Organisation du dépôt
 
-├── Projet_AD_spotify.Rmd      # Réduction de dimension, analyse et clustering (R)
+├── Projet.ipynb      # Réduction de dimension, analyse et clustering (R)
 ├── Data.csv                   # Dataset Spotify (~30 000 chansons)
 └── README.md                  # Ce fichier
 
